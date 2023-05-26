@@ -1,10 +1,11 @@
 import laspy
 import numpy as np
+import pandas as pd
 import os
 import subprocess
-import time
 import configparser
 import argparse
+from datetime import datetime
 
 def validateArguments():
     # Create an ArgumentParser object
@@ -13,7 +14,7 @@ def validateArguments():
     # Add arguments to the parser
     parser.add_argument('-i', '--input', type=str, required=True, help='Input file', dest="input")
     parser.add_argument('-s', '--seperator', type=str, required=False, default=',', help='Specify how data is seperated (default = \',\')', dest="seperator")
-    parser.add_argument('-c', '--classification', type=int, required=False, default=4, help='Specify which is the classification column (default = 4)')
+    parser.add_argument('-c', '--classification_column', type=int, required=False, default=4, help='Specify which is the classification column (default = 4)')
 
     # Parse the command line arguments
     args = parser.parse_args()
@@ -28,7 +29,7 @@ def validateArguments():
         exit()
 
     # return arguments
-    return args.input, args.seperator, args.classification
+    return args.input, args.seperator, args.classification_column
 
 def parseConfig():
     config = configparser.ConfigParser()
@@ -55,6 +56,9 @@ def parseConfig():
     return PC_path, Potree_output_path
 
 def txtToLas(data, cc, fileName="tmp_las.las"):
+    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"[{curTime}] Converting data to .las file...")
+
     # Check for extension
     if fileName[-4:len(fileName)] != ".las":
         fileName += ".las"
@@ -73,16 +77,24 @@ def txtToLas(data, cc, fileName="tmp_las.las"):
     las.z = data[:, 2]
 
     # Assign classification
-    if data.shape[1] == cc:
+    try:
         las.classification = data[:, cc-1].astype(int)
+    except:
+        pass
 
     # Write to LAS file
     LasFile = os.path.join(os.path.abspath(os.curdir), fileName)
     las.write(LasFile)
-    
+
+    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"[{curTime}] Successfully generated .las file!\n")
+
     return LasFile
 
 def LasToPotree(lasFile, potreeConverterPath, outputPath):
+    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"[{curTime}] Converting .las file to Potree...")
+
     # Define output_path
     if outputPath == "DEFAULT":
         outputFolder = os.path.abspath(os.curdir) + "/Potree_files/" + os.path.splitext(os.path.basename(lasFile))[0]
@@ -104,15 +116,14 @@ def LasToPotree(lasFile, potreeConverterPath, outputPath):
         if not os.path.isfile(os.path.join(outputFolder, file)):
             raise Exception("PotreeConverter failed!")
     
+    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"[{curTime}] Potree files generated at {outputFolder}\n")
+
     return outputFolder
 
 
 if __name__ == "__main__":
-    START_TIME = time.time()
-    # Set working path to script location:
-    os.chdir(os.path.split(__file__)[0])
-
-     # Parse arguments
+    # Parse arguments
     INPUT_FILE, SEPERATOR, CLASSIFICATION_COLUMN = validateArguments()
 
     # Parse config.ini
@@ -122,18 +133,16 @@ if __name__ == "__main__":
     fileName, ext = os.path.splitext(os.path.basename(INPUT_FILE))
 
     # Read input file
-    print("\nLoading data from file...\n")
-    points = np.loadtxt(INPUT_FILE, delimiter=SEPERATOR, dtype=np.float32)
-    print(f"\nFile \"{os.path.basename(INPUT_FILE)}\" loaded. Time elapsed (s): {(time.time() - START_TIME):.4f}\n")
+    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"[{curTime}] Loading data from file...")
+
+    points = pd.read_csv(INPUT_FILE, sep=SEPERATOR, header=None).to_numpy()
+    
+    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"[{curTime}] File \"{os.path.basename(INPUT_FILE)}\" loaded!")
 
     # Convert to .las
-    print("\nConverting data to .las file...\n")
     lasFile = txtToLas(points, CLASSIFICATION_COLUMN, fileName=fileName)
-    print(f"\nSuccessfully generated .las file. Time elapsed (s): {(time.time() - START_TIME):.4f}\n")
 
     # Convert to Potree
-    print("\nConverting .las file to Potree...\n")
     PotreePath = LasToPotree(lasFile=lasFile, potreeConverterPath=POTREE_CONVERTER, outputPath=OUTPUT_DIR)
-    print(f"\nPotree files generated at {PotreePath}\n")
-
-    print(f"Total time elapsed (s): {(time.time() - START_TIME):.4f}\n")
