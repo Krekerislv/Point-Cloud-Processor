@@ -12,8 +12,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 txt2Potree_dir = os.path.join(current_dir, '..', 'txt2Potree')
 sys.path.append(txt2Potree_dir)
 import txt2Potree
-
-# TODO add arguments for eps and min_samples 
+ 
 def validateArguments():
     # Create an ArgumentParser object
     parser = argparse.ArgumentParser(description='Convert text files to Potree format.')
@@ -25,6 +24,10 @@ def validateArguments():
     parser.add_argument('-a', '--algorithm', type=str, choices=['DBSCAN', 'HDBSCAN*'], required=False, help='Clustering algorithm to classify noise points with.')
     parser.add_argument('--cores', type=int, required=False, default=4, help='Number of CPU cores to use in parallel (default = 4). Use -1 for all available')
     parser.add_argument('--classification_column', type=int, required=False, default=4, help='Specify which is the classification column (default = 4)')
+
+    # Arguments for DBSCAN
+    parser.add_argument('--eps', type=float, required=False, help="Specify the value of eps for DBSCAN (only if using DBSCAN).")
+    parser.add_argument('--min_samples', type=int, required=False, help="Specify the value of min samples for DBSCAN (only if using DBSCAN).")
 
     # Parse the command line arguments
     args = parser.parse_args()
@@ -47,8 +50,21 @@ def validateArguments():
     if args.cores <= 0 and args.cores != -1:
         print(f"Argument \"--cores\" should be positive integer or -1! You specified: {args.cores}")
 
+    # check DBSCAN arguments
+    if args.algorithm == "DBSCAN":
+        if not args.eps or not args.min_samples:
+            print("If using DBSCAN, --eps and --min_samples must be specified!")
+            exit()
+        
+        if args.eps <= 0:
+            print(f"Specified invalid eps value of {args.eps}. Eps must be > 0")
+            exit()
+        if args.min_samples <= 0:
+            print(f"Specified invalid min samples value of {args.min_samples}. Min samples must be > 0")
+            exit()
+
     # return arguments
-    return args.input, args.algorithm, args.seperator, args.classifyNoise, args.cores, args.classification_column
+    return args.input, args.algorithm, args.seperator, args.classifyNoise, args.cores, args.classification_column, args.eps, args.min_samples
 
 def parseConfig():
     config = configparser.ConfigParser()
@@ -88,23 +104,22 @@ def read_txt(file, sep):
     
     return data, fileName, ext
     
-def perform_DBSCAN(data):
+def perform_DBSCAN(data, eps, min_samples, n_jobs, cc):
     curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     print(f"[{curTime}] Starting DBSCAN...")
 
     # Create a DBSCAN object
-    #db = DBSCAN(eps=0.49, min_samples=189, n_jobs=-1)
-    db = DBSCAN(eps=0.5, min_samples=25, n_jobs=-1)
+    db = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=n_jobs)
 
     # Perform DBSCAN
-    db.fit(data)
+    db.fit(np.delete(data,[cc-1], axis=1))
 
     # change -1 (noise) to 255
     labels = db.labels_
     labels[labels == -1 ] = 255
 
     # add classification column to data
-    data = np.column_stack([data,labels])
+    data[: , cc-1] = labels
 
     curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     print(f"[{curTime}] DBSCAN finished!")
@@ -116,81 +131,7 @@ def perform_DBSCAN(data):
     return data
 
 def perform_HDBSCAN_star(data):
-    print("HDBSCAN")
-    return data
-
-# This should be done with txt2Potree, however... then i need to save to csv and pass it there. Would be better to import txt2Potree and use it
-"""
-def data_to_LAS(data):
-    curTime = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-    print(f"[{curTime}] Converting data to LAS!")
-
-    # Init LAS file header
-    header = laspy.LasHeader(point_format=6, version="1.4")
-    header.offsets = np.min(data[: , :3], axis=0)
-    header.scales = np.array([0.01, 0.01, 0.01])
-
-    # Create a LAS object
-    las = laspy.LasData(header)
-
-    # Assign point coordinates
-    las.x = data[:, 0]
-    las.y = data[:, 1]
-    las.z = data[:, 2]
-
-    # Assign classification
-    if data.shape[1] == 4:
-        # If classification column was present in input file OR assigned with clustering algorithm
-        las.classification = data[:, 3].astype(int)
-    else:
-        # If classificaton column is not present, set it to 0
-        las.classification = np.zeros((data.shape[0]))
-
-    # Write to LAS file
-    LasFilePath = "tmp_las_file.las"
-    
-    las.write(LasFilePath)
-
-    curTime = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-    print(f"[{curTime}] LAS file created!")
-    
-    return LasFilePath
-
-def LAS_to_Potree(las_path, Potree_converter_path, Potree_output, cloudName, classify_noise):
-    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-    print(f"[{curTime}] Converting LAS to Potree...")
-
-    # Define output_path
-    if Potree_output == "DEFAULT":
-        outputFolder = os.path.join(os.path.abspath(os.curdir), "Potree_files", cloudName)
-    else:
-        # Check if folder already exists (avoid overwrite)
-        i = ""
-        j = 1
-        if classify_noise:
-            c_str = "_cNoise"
-        else:
-            c_str = ""
-
-        while os.path.exists(os.path.join(Potree_output, cloudName + c_str + i)):
-            i = "_" + str(j)
-            j += 1
-        
-        outputFolder = os.path.join(Potree_output, cloudName + c_str + i)
-
-
-    #definē kommandrindas komandu, kuru izpildīt no Python
-    command = [Potree_converter_path, las_path, "-o", outputFolder]
-
-    #izpilda kommandu, neizvadot tās rezultātus Python terminālī
-    subprocess.call(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    # Delete tmp LAS file
-    os.remove(las_path)
-
-    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-    print(f"[{curTime}] Potree files generated at \"{outputFolder}\"")
-"""
+    print("TODO: HDBSCAN*")
 
 if __name__ == "__main__":
     # Main code
@@ -199,7 +140,7 @@ if __name__ == "__main__":
     POTREE_CONVERTER_PATH, POTREE_OUTPUT = parseConfig()
 
     # Validate command-line arguments
-    INPUT_FILE, ALGORITHM, SEP, CLASSIFY_NOISE, CORES, CLASS_COLUMN = validateArguments()
+    INPUT_FILE, ALGORITHM, SEP, CLASSIFY_NOISE, CORES, CLASS_COLUMN, EPS, MIN_SAMPLES = validateArguments()
 
     # Read text file
     data, fileName, ext = read_txt(INPUT_FILE, SEP)
@@ -207,12 +148,14 @@ if __name__ == "__main__":
     # if user specified -c or --classifyNoise then do so
     if CLASSIFY_NOISE:
         if ALGORITHM == "DBSCAN":
-            data = perform_DBSCAN(data)
+            data = perform_DBSCAN(data, EPS, MIN_SAMPLES, CORES, cc=CLASS_COLUMN)
         elif ALGORITHM == "HDBSCAN*":
             data = perform_HDBSCAN_star(data)
+        
+        fileName += "_cleaned"
 
     # Convert data to LAS
-    las_path = txt2Potree.txtToLas(data, CLASS_COLUMN, fileName=os.path.splitext(os.path.basename(INPUT_FILE))[0])
+    las_path = txt2Potree.txtToLas(data, CLASS_COLUMN, fileName=fileName)
 
     # Convert LAS to Potree
     txt2Potree.LasToPotree(las_path, POTREE_CONVERTER_PATH, POTREE_OUTPUT)
