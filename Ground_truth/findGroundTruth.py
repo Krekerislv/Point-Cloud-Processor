@@ -1,14 +1,15 @@
 import numpy as np
+import pandas as pd
 from sklearn.neighbors import KDTree
 from joblib import Parallel, delayed
 import argparse
 import os
-import time
+from datetime import datetime
 import traceback
 
 def validateArguments():
     # Create an ArgumentParser object
-    parser = argparse.ArgumentParser(description='Find matching points in .')
+    parser = argparse.ArgumentParser(description='Find matching points in radius.')
 
     # Add arguments to the parser
     parser.add_argument('-dr', '--raw', type=str, required=True, help='Raw data input')
@@ -61,19 +62,19 @@ def find_matching_points(raw_points, clean_points, radius):
 
     return results
 
-
 if __name__ == "__main__":
-    START_TIME = time.time()
-
     # Get input arguments    
     raw_file, clean_file, radius, sep, cores, save_file = validateArguments()
 
     # Load raw data and clean data
-    raw = np.loadtxt(raw_file, delimiter=sep, dtype=np.float32)
-    clean = np.loadtxt(clean_file, delimiter=sep, dtype=np.float32)
+    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"[{curTime}] Loading data from file...")
+    raw = pd.read_csv(raw_file, sep=sep, header=None).drop_duplicates().to_numpy()
+    clean = pd.read_csv(clean_file, sep=sep, header=None).drop_duplicates().to_numpy()
     
-
-    print(f"\nFiles \"{os.path.basename(raw_file)}\" and \"{os.path.basename(clean_file)}\" loaded. Time elapsed (s): {(time.time() - START_TIME):.4f}\n")
+    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"[{curTime}] Files \"{os.path.basename(raw_file)}\" and \"{os.path.basename(clean_file)}\" loaded!\n")
+    
     
     # Split raw data into chunks and process in parallel
     results = Parallel(n_jobs=cores)(
@@ -85,8 +86,9 @@ if __name__ == "__main__":
     results = np.concatenate(results)
 
     # Display results
-    print("\n==================================================")
-    print(f"|| Time elapsed (s):\t\t{(time.time() - START_TIME):.4f}\t\t||")
+    curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"\n[{curTime}]")
+    print("==================================================")
     print(f"|| Raw point count:\t\t{raw.shape[0]}\t\t||")
     print(f"|| Clean point count:\t\t{clean.shape[0]}\t\t||")
     print(f"|| Radius:\t\t\t{radius}\t\t||")
@@ -98,15 +100,16 @@ if __name__ == "__main__":
     # Save results
     if save_file != None:
         try:
-            print("\nSaving ground truth...\n")
+            curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            print(f"[{curTime}] Saving ground truth...")
 
             file_name, ext = os.path.splitext(os.path.basename(raw_file))
             path = os.path.join(save_file)
 
             np.savetxt(path, results, delimiter=sep, fmt='%.2f')
-
-            print(f"\nGround truth file saved at \"{path}\"\n")
+            
+            curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            print(f"[{curTime}] Ground truth file saved at \"{path}\"\n")
         except Exception:
-            print(f"{traceback.format_exec()}\n")
-
-    print(f"\nTotal program execution time: {(time.time() - START_TIME):.4f} seconds.\n")
+            curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            print(f"[{curTime}] {traceback.format_exec()}\n")
