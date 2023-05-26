@@ -1,1 +1,6 @@
 PotreeConverter
+*/__pycache__
+potree
+CSVs
+Evaluate_params/*.svg
+Evaluate_params/*.txt
