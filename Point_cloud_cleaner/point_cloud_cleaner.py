@@ -6,6 +6,7 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 from datetime import datetime
 import sys
+import traceback
 
 # Add temp path variable and import txt2Potree
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,12 +19,13 @@ def validateArguments():
     parser = argparse.ArgumentParser(description='Convert text files to Potree format.')
 
     # Add arguments to the parser
-    parser.add_argument('-i', '--input', type=str, required=True, help='Input file')
+    parser.add_argument('-i', '--input', type=str, required=True, nargs='+', help='Input file(s). If multiple fiels are given, results will be combined.')
+    parser.add_argument('-n', '--name', type=str, required=False, default="Potree_cloud", help="Specify the name of point cloud (how it will display in Potree)")
     parser.add_argument('-s', '--seperator', type=str, required=False, default=',', help='Specify how data is seperated (default = \',\')')
     parser.add_argument('-c', '--classifyNoise', action='store_true', help="Add this flag to classify noise points.")
-    parser.add_argument('-a', '--algorithm', type=str, choices=['DBSCAN', 'HDBSCAN*'], required=False, help='Clustering algorithm to classify noise points with.')
     parser.add_argument('--cores', type=int, required=False, default=4, help='Number of CPU cores to use in parallel (default = 4). Use -1 for all available')
     parser.add_argument('--classification_column', type=int, required=False, default=4, help='Specify which is the classification column (default = 4)')
+    parser.add_argument('--save', required=False, type=str, help="Specify file if you wish to save text file after clustering.")
 
     # Arguments for DBSCAN
     parser.add_argument('--eps', type=float, required=False, help="Specify the value of eps for DBSCAN (only if using DBSCAN).")
@@ -33,25 +35,7 @@ def validateArguments():
     args = parser.parse_args()
 
     # If classifyNoise flag is true
-    if args.classifyNoise and args.algorithm is None:
-        parser.error("If '-c' or '--classifyNoise' is present, algorithm must be specified using '-a' or '--algorithm'.")
-
-    # Check if input file exists
-    if not os.path.isfile(args.input):
-        print(f"Input file \"{args.input}\" doesn't exist!")
-        exit()
-
-    # Check if seperator is valid
-    if len(args.seperator) != 1:
-        print(f"Invalid seperator: \"{args.seperator}\"")
-        exit()
-
-    # Check for valid core count
-    if args.cores <= 0 and args.cores != -1:
-        print(f"Argument \"--cores\" should be positive integer or -1! You specified: {args.cores}")
-
-    # check DBSCAN arguments
-    if args.algorithm == "DBSCAN":
+    if args.classifyNoise:
         if not args.eps or not args.min_samples:
             print("If using DBSCAN, --eps and --min_samples must be specified!")
             exit()
@@ -63,8 +47,24 @@ def validateArguments():
             print(f"Specified invalid min samples value of {args.min_samples}. Min samples must be > 0")
             exit()
 
+    # Check if input file exists
+    for path in args.input:
+        if not os.path.isfile(path):
+            print(f"Input file \"{path}\" doesn't exist!")
+            exit()
+
+    # Check if seperator is valid
+    if len(args.seperator) != 1:
+        print(f"Invalid seperator: \"{args.seperator}\"")
+        exit()
+
+    # Check for valid core count
+    if args.cores <= 0 and args.cores != -1:
+        print(f"Argument \"--cores\" should be positive integer or -1! You specified: {args.cores}")
+        
+
     # return arguments
-    return args.input, args.algorithm, args.seperator, args.classifyNoise, args.cores, args.classification_column, args.eps, args.min_samples
+    return args.input, args.seperator, args.classifyNoise, args.cores, args.classification_column, args.eps, args.min_samples, args.save, args.name
 
 def parseConfig():
     config = configparser.ConfigParser()
@@ -95,14 +95,11 @@ def read_txt(file, sep):
     
     # Convert data to numpy
     data = data.to_numpy()
-
-    # Get file name
-    fileName, ext = os.path.splitext(os.path.basename(file))
     
     curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     print(f"[{curTime}] File \"{os.path.basename(file)}\" read successfuly!")
     
-    return data, fileName, ext
+    return data
     
 def perform_DBSCAN(data, eps, min_samples, n_jobs, cc):
     curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
@@ -112,14 +109,22 @@ def perform_DBSCAN(data, eps, min_samples, n_jobs, cc):
     db = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=n_jobs)
 
     # Perform DBSCAN
-    db.fit(np.delete(data,[cc-1], axis=1))
+    try:
+        data = np.delete(data,[cc-1], axis=1)
+    except:
+        pass
+
+    db.fit(data)
 
     # change -1 (noise) to 255
     labels = db.labels_
     labels[labels == -1 ] = 255
 
     # add classification column to data
-    data[: , cc-1] = labels
+    data = np.column_stack([data,labels])
+
+    # If Z axis value is less than 0.9, classify it as noise
+    data[ : , cc-1][data[: , 2]  <= 0.9] = 255
 
     curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
     print(f"[{curTime}] DBSCAN finished!")
@@ -130,8 +135,6 @@ def perform_DBSCAN(data, eps, min_samples, n_jobs, cc):
 
     return data
 
-def perform_HDBSCAN_star(data):
-    print("TODO: HDBSCAN*")
 
 if __name__ == "__main__":
     # Main code
@@ -140,22 +143,42 @@ if __name__ == "__main__":
     POTREE_CONVERTER_PATH, POTREE_OUTPUT = parseConfig()
 
     # Validate command-line arguments
-    INPUT_FILE, ALGORITHM, SEP, CLASSIFY_NOISE, CORES, CLASS_COLUMN, EPS, MIN_SAMPLES = validateArguments()
+    INPUT_FILES, SEP, CLASSIFY_NOISE, CORES, CLASS_COLUMN, EPS, MIN_SAMPLES, SAVE, FILE_NAME = validateArguments()
 
-    # Read text file
-    data, fileName, ext = read_txt(INPUT_FILE, SEP)
+    # Initialize empty numpy array
+    all_data = np.empty((0,0))
 
-    # if user specified -c or --classifyNoise then do so
-    if CLASSIFY_NOISE:
-        if ALGORITHM == "DBSCAN":
+    # Read text file(s)
+    for path in INPUT_FILES:
+        data = read_txt(path, SEP)
+
+        # if user specified -c or --classifyNoise then do so
+        if CLASSIFY_NOISE:
             data = perform_DBSCAN(data, EPS, MIN_SAMPLES, CORES, cc=CLASS_COLUMN)
-        elif ALGORITHM == "HDBSCAN*":
-            data = perform_HDBSCAN_star(data)
-        
-        fileName += "_cleaned"
+
+        # Set correct dimensions for all_data
+        # All input files must be with same column count
+        if all_data.shape[1] != data.shape[1]:
+            all_data.shape = (0, data.shape[1])
+
+        # Append data to all_data
+        all_data = np.vstack([all_data, data])
 
     # Convert data to LAS
-    las_path = txt2Potree.txtToLas(data, CLASS_COLUMN, fileName=fileName)
+    las_path = txt2Potree.txtToLas(all_data, CLASS_COLUMN, fileName=FILE_NAME)
 
     # Convert LAS to Potree
     txt2Potree.LasToPotree(las_path, POTREE_CONVERTER_PATH, POTREE_OUTPUT)
+
+    if SAVE != None:
+        try:
+            curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            print(f"[{curTime}] Saving text file...")
+
+            np.savetxt(SAVE, all_data, delimiter=SEP, fmt='%.2f')
+            
+            curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            print(f"[{curTime}] Text file saved at \"{SAVE}\"\n")
+        except Exception:
+            curTime = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            print(f"[{curTime}] {traceback.format_exec()}\n")
