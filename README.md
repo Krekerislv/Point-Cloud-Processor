@@ -1,2 +1,4 @@
 # Point-Cloud-Processor
-Programmas bakalaura darbam
+Programs for bachelor's thesis
+
+Python programs should be launched from here.
