@@ -4,3 +4,5 @@ potree
 CSVs
 Evaluate_params/*.svg
 Evaluate_params/*.txt
+Evaluate_params/Finished_logs
+Evaluate_params/parameter_tuning_cuml.ipynb
