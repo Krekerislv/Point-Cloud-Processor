@@ -1,5 +1,5 @@
-# txt2Potree
-Program to clean point clouds with DBSCAN or HDBSCAN*, save results as csv and convert to Potree format to visualize results.
+# Point cloud cleaner
+Program to clean point clouds with DBSCAN, save results in a text file and convert to Potree format to visualize results.
 
 ### Requiriments:
 * Numpy
